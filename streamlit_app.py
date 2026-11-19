@@ -198,8 +198,8 @@ with tabs[1]:
         fig.update_layout(xaxis_tickangle=-45)
         st.plotly_chart(fig, use_container_width=True)
         if {"男性", "女性"}.issubset(population.columns):
-            sex = population.melt(id_vars="校区", value_vars=["男性", "女性"], var_name="性別", value_name="人口")
-            st.plotly_chart(px.bar(sex, x="校区", y="人口", color="性別", barmode="group", title="校区別男女別人口"), use_container_width=True)
+            sex = population.melt(id_vars="校区", value_vars=["男性", "女性"], var_name="性別", value_name="男女別人口")
+            st.plotly_chart(px.bar(sex, x="校区", y="男女別人口", color="性別", barmode="group", title="校区別男女別人口"), use_container_width=True)
         st.dataframe(population, use_container_width=True, hide_index=True)
         st.download_button("人口CSVを保存", population.to_csv(index=False).encode("utf-8-sig"), "kurume_population.csv", "text/csv")
 
