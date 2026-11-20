@@ -52,6 +52,32 @@ def to_num(s):
         errors="coerce"
     )
 
+def split_general_questions(df):
+    """質問項目セルを大項目単位に分割。ア・イ等の小項目は直前の大項目に保持。"""
+    if "質問項目" not in df.columns:
+        raise ValueError("「質問項目」列が見つかりません。CSVの列名を確認してください。")
+    subitem = re.compile(r"^(?:[ア-ン]\s*[.．、:：)]|[（(]\s*\d+\s*[）)]|\d+[.)．]|[①-⑳]|[・●○])")
+    rows = []
+    for _, row in df.iterrows():
+        original = "" if pd.isna(row.get("質問項目")) else str(row.get("質問項目"))
+        lines = [re.sub(r"^[\s　]+|[\s　]+$", "", x) for x in re.split(r"[\r\n]+", original)]
+        lines = [x for x in lines if x]
+        groups = []
+        for line in lines:
+            if subitem.match(line) and groups:
+                groups[-1] += "\n" + line
+            else:
+                groups.append(line)
+        if not groups:
+            groups = [original.strip()] if original.strip() else [""]
+        for number, item in enumerate(groups, start=1):
+            new_row = row.copy()
+            new_row["質問項目_元データ"] = original
+            new_row["質問番号"] = number
+            new_row["質問項目"] = item
+            rows.append(new_row)
+    return pd.DataFrame(rows).reset_index(drop=True)
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_dataset_csv(dataset_id):
     response = requests.get(CKAN_API.format(dataset_id), timeout=30)
@@ -162,7 +188,7 @@ try:
 except Exception as e:
     age_error = str(e)
 
-tabs = st.tabs(["概要", "校区別人口", "年齢構成", "予算事業", "地域・都市計画", "データ確認"])
+tabs = st.tabs(["概要", "校区別人口", "年齢構成", "予算事業", "地域・都市計画", "一般質問分析", "データ確認"])
 
 with tabs[0]:
     st.header("分析の全体像")
@@ -261,6 +287,42 @@ with tabs[4]:
     st.warning("境界ポリゴンはまだアプリに接続していません。ここでは分類マスターを表示しています。地点の区域判定や校区境界の塗り分けは未実装です。API利用申請は後回しにし、まず既存公開データで進めます。")
 
 with tabs[5]:
+    st.header("一般質問データの分割・分析")
+    st.caption("1つのセルに複数の大項目が入っている場合、大項目ごとに1行へ分割します。ア・イ等の小項目は直前の大項目に残します。")
+    default_questions = BASE_DIR / "kurume_general_questions.csv"
+    uploaded = st.file_uploader("一般質問CSVを選択（未選択なら同梱データを使用）", type=["csv"], key="general_questions_upload")
+    try:
+        if uploaded is not None:
+            raw_questions = pd.read_csv(uploaded, encoding="utf-8-sig")
+            source_label = uploaded.name
+        elif default_questions.exists():
+            raw_questions = pd.read_csv(default_questions, encoding="utf-8-sig")
+            source_label = default_questions.name
+        else:
+            raw_questions = pd.DataFrame()
+            source_label = ""
+        if raw_questions.empty:
+            st.info("一般質問CSVをアップロードしてください。")
+        else:
+            split_questions = split_general_questions(raw_questions)
+            a, b, c = st.columns(3)
+            a.metric("元データ", f"{len(raw_questions):,}行")
+            b.metric("分割後", f"{len(split_questions):,}行")
+            c.metric("増加行数", f"{len(split_questions)-len(raw_questions):,}行")
+            st.success(f"{source_label} を読み込みました。")
+            search_q = st.text_input("議員名・質問項目で検索", key="general_question_search")
+            view_q = split_questions.copy()
+            if search_q:
+                searchable = [c for c in ["議員", "議員表示名（公式表記）", "質問項目", "会議"] if c in view_q.columns]
+                mask = view_q[searchable].fillna("").astype(str).apply(lambda col: col.str.contains(search_q, case=False, na=False)).any(axis=1)
+                view_q = view_q[mask]
+            st.dataframe(view_q, use_container_width=True, hide_index=True)
+            st.download_button("分割済みデータをCSV保存", split_questions.to_csv(index=False).encode("utf-8-sig"), "kurume_general_questions_split.csv", "text/csv", use_container_width=True)
+            st.caption("注意：小項目のア・イ・ウ、丸数字、括弧付き番号などは親項目に連結しています。元の質問項目は「質問項目_元データ」列に保存しています。")
+    except Exception as e:
+        st.error(f"一般質問CSVの処理に失敗しました：{e}")
+
+with tabs[6]:
     st.header("取得データ・出典")
     st.subheader("人口データ")
     st.markdown(f"- [校区別人口・世帯数（BODIK）](https://data.bodik.jp/dataset/{POP_DATASET})")
